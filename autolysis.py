@@ -45,4 +45,24 @@ print(data.info())
 print("First 5 Rows:")
 print(data.head())
 
+# Analyze missing values
+print("\nMissing Values:")
+missing_values = data.isnull().sum()
+print(missing_values[missing_values > 0])
 
+# Summary statistics for numerical columns
+print("\nSummary Statistics:")
+print(data.describe())
+
+# Correlation matrix for numerical columns
+print("\nCorrelation Matrix:")
+numerical_columns = data.select_dtypes(include=["float64", "int64"])  # Select only numeric columns
+correlation_matrix = numerical_columns.corr()
+print(correlation_matrix)
+
+# Save the correlation heatmap as a PNG file
+plt.figure(figsize=(10, 8))
+sns.heatmap(correlation_matrix, annot=True, fmt=".2f", cmap="coolwarm", cbar=True)
+plt.title("Correlation Matrix Heatmap")
+plt.savefig("correlation_matrix.png")
+print("Correlation heatmap saved as 'correlation_matrix.png'")
