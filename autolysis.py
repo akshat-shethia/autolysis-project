@@ -5,9 +5,8 @@
 #   "pandas",
 #   "matplotlib",
 #   "seaborn",
-#   "openai",
-#   "scikit-learn",
-#   "requests"
+#   "requests",
+#   "scikit-learn"
 # ]
 # ///
 
@@ -33,14 +32,22 @@ if len(sys.argv) != 2:
 
 # Get the filename
 filename = sys.argv[1]
+out_dir = filename.split('.')[0]
+os.makedirs(out_dir, exist_ok=True)
 
 # Read the CSV file
 try:
-    data = pd.read_csv(filename)
-    print(f"Successfully loaded {filename}")
-except Exception as e:
-    print(f"Error loading {filename}: {e}")
-    sys.exit(1)
+    # Try reading with UTF-8 first
+    data = pd.read_csv(filename, encoding="utf-8")
+    print(f"Successfully loaded {filename} with UTF-8 encoding")
+except UnicodeDecodeError:
+    # Fallback to ISO-8859-1 if UTF-8 fails
+    try:
+        data = pd.read_csv(filename, encoding="ISO-8859-1")
+        print(f"Successfully loaded {filename} with ISO-8859-1 encoding")
+    except Exception as e:
+        print(f"Error loading {filename}: {e}")
+        sys.exit(1)
 
 # Show basic info about the data
 print("Dataset Overview:")
@@ -67,26 +74,24 @@ print("\nMissing values handled successfully!")
 
 # Correlation matrix for numerical columns
 print("\nCorrelation Matrix:")
-numerical_columns = data.select_dtypes(
-    include=["float64", "int64"]
-)  # Select only numeric columns
+numerical_columns = data.select_dtypes(include=["float64", "int64"])  # Select only numeric columns
 correlation_matrix = numerical_columns.corr()
 print(correlation_matrix)
 
 # Save the correlation heatmap as a PNG file
 plt.figure(figsize=(12, 8))
-sns.heatmap(correlation_matrix, annot=True,
-            fmt=".2f", cmap="coolwarm", cbar=True)
+sns.heatmap(correlation_matrix, annot=True, fmt=".2f", cmap="coolwarm", cbar=True)
 plt.title("Correlation Matrix Heatmap")
-out_dir = filename.split('.')[0]
-os.makedirs(out_dir, exist_ok=True)
 plt.savefig(f"{out_dir}/correlation_matrix.png")
 print(f"Correlation heatmap saved as '{out_dir}/correlation_matrix.png'")
 
 # Outlier detection using Isolation Forest
 print("\nDetecting Outliers with Isolation Forest:")
+if "average_rating" in numerical_columns and "ratings_count" in numerical_columns:
+    features = numerical_columns[["average_rating", "ratings_count"]]
+else:
+    features = numerical_columns.iloc[:, :2]  # Use first two numeric columns if specific ones are missing
 isolation_forest = IsolationForest(random_state=42, contamination=0.05)
-features = numerical_columns[["average_rating", "ratings_count"]]
 isolation_forest.fit(features)
 
 # Predict anomalies (1 for inliers, -1 for outliers)
@@ -99,15 +104,15 @@ print(f"Number of outliers detected: {len(outliers)}")
 # Visualize inliers vs. outliers
 plt.figure(figsize=(8, 6))
 sns.scatterplot(
-    x=features["ratings_count"],
-    y=features["average_rating"],
+    x=features.iloc[:, 0],
+    y=features.iloc[:, 1],
     hue=predictions,
     palette={1: "blue", -1: "red"},
     legend="full"
 )
 plt.title("Isolation Forest Outlier Detection")
-plt.xlabel("Ratings Count")
-plt.ylabel("Average Rating")
+plt.xlabel(features.columns[0])
+plt.ylabel(features.columns[1])
 plt.savefig(f"{out_dir}/outliers.png")
 print(f"Outlier visualization saved as '{out_dir}/outliers.png'")
 
@@ -145,8 +150,6 @@ The analysis included:
 Provide the response in Markdown format.
 """
 
-import requests
-
 # Proxy API endpoint and headers
 proxy_url = "https://aiproxy.sanand.workers.dev/openai/v1/chat/completions"
 headers = {
@@ -155,7 +158,7 @@ headers = {
 }
 
 # Chat Completion Data
-data = {
+request_data = {
     "model": "gpt-4o-mini",
     "messages": [
         {"role": "system", "content": "You are an expert data analyst."},
@@ -164,7 +167,7 @@ data = {
 }
 
 # API Request to the Proxy
-response = requests.post(proxy_url, headers=headers, json=data)
+response = requests.post(proxy_url, headers=headers, json=request_data)
 if response.status_code == 200:
     readme_content = response.json()["choices"][0]["message"]["content"]
     with open(f"{out_dir}/README.md", "w") as f:
