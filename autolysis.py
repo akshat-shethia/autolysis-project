@@ -3,175 +3,137 @@
 # dependencies = [
 #   "httpx",
 #   "pandas",
-#   "matplotlib",
 #   "seaborn",
-#   "requests",
-#   "scikit-learn"
-# ]
+#   "matplotlib",
+#   "numpy",
+#   "scikit-learn",
+#   "chardet"
+# ] 
 # ///
 
 import os
 import sys
 import pandas as pd
-import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.ensemble import IsolationForest
+import matplotlib.pyplot as plt
+import numpy as np
 from sklearn.cluster import KMeans
-from sklearn.decomposition import PCA
-import requests
+import httpx
+import time
+import chardet
 
-# OpenAI Token Setup
-AIPROXY_TOKEN = os.environ.get("AIPROXY_TOKEN")
+API_URL = "https://aiproxy.sanand.workers.dev/openai/v1/chat/completions"
+AIPROXY_TOKEN = os.getenv("AIPROXY_TOKEN")
+
 if not AIPROXY_TOKEN:
-    raise ValueError("Please set the AIPROXY_TOKEN environment variable.")
-
-# Check if a file was provided
-if len(sys.argv) != 2:
-    print("Usage: uv run autolysis.py <filename.csv>")
+    print("Error: AIPROXY_TOKEN environment variable is not set.")
     sys.exit(1)
 
-# Get the filename
-filename = sys.argv[1]
-out_dir = filename.split('.')[0]
-os.makedirs(out_dir, exist_ok=True)
-
-# Read the CSV file
-try:
-    # Try reading with UTF-8 first
-    data = pd.read_csv(filename, encoding="utf-8")
-    print(f"Successfully loaded {filename} with UTF-8 encoding")
-except UnicodeDecodeError:
-    # Fallback to ISO-8859-1 if UTF-8 fails
+def load_data(file_path):
     try:
-        data = pd.read_csv(filename, encoding="ISO-8859-1")
-        print(f"Successfully loaded {filename} with ISO-8859-1 encoding")
+        with open(file_path, 'rb') as f:
+            result = chardet.detect(f.read())  # Detect the encoding
+        encoding = result['encoding']
+        data = pd.read_csv(file_path, encoding=encoding)  # Use detected encoding
+        return data
     except Exception as e:
-        print(f"Error loading {filename}: {e}")
+        print(f"Error loading file {file_path}: {e}")
         sys.exit(1)
 
-# Show basic info about the data
-print("Dataset Overview:")
-print(data.info())
-print("First 5 Rows:")
-print(data.head())
+def basic_analysis(data):
+    summary = data.describe(include='all').to_dict()
+    missing_values = data.isnull().sum().to_dict()
+    return {"summary": summary, "missing_values": missing_values}
 
-# Analyze missing values
-print("\nMissing Values:")
-missing_values = data.isnull().sum()
-print(missing_values[missing_values > 0])
+def outlier_detection(data):
+    numeric_data = data.select_dtypes(include=np.number)
+    z_scores = np.abs((numeric_data - numeric_data.mean()) / numeric_data.std())
+    outliers = (z_scores > 3).sum().to_dict()
+    return {"outliers": outliers}
 
-# Handle missing values
-print("\nHandling Missing Values:")
-for column in missing_values.index:
-    if data[column].dtype in ["float64", "int64"]:  # Numerical columns
-        data[column].fillna(data[column].mean(), inplace=True)
-        print(f"Filled missing values in '{column}' with mean: {data[column].mean()}")
-    elif data[column].dtype == "object":  # Categorical columns
-        data[column].fillna(data[column].mode()[0], inplace=True)
-        print(f"Filled missing values in '{column}' with mode: {data[column].mode()[0]}")
+def cluster_analysis(data):
+    numeric_data = data.select_dtypes(include=np.number).dropna()
+    if numeric_data.shape[1] >= 2:
+        kmeans = KMeans(n_clusters=3, random_state=42)
+        numeric_data['cluster'] = kmeans.fit_predict(numeric_data)
+        sns.scatterplot(
+            x=numeric_data.iloc[:, 0],
+            y=numeric_data.iloc[:, 1],
+            hue=numeric_data['cluster'],
+            palette='viridis'
+        )
+        plt.title("Cluster Analysis")
+        plt.savefig("clusters.png")
+        plt.close()
 
-print("\nMissing values handled successfully!")
+def correlation_matrix(data):
+    correlation = data.corr(numeric_only=True)
+    sns.heatmap(correlation, annot=True, cmap='coolwarm')
+    plt.title("Correlation Matrix")
+    plt.savefig("correlation_matrix.png")
+    plt.close()
 
-# Correlation matrix for numerical columns
-print("\nCorrelation Matrix:")
-numerical_columns = data.select_dtypes(include=["float64", "int64"])  # Select only numeric columns
-correlation_matrix = numerical_columns.corr()
-print(correlation_matrix)
+def query_llm(prompt):
+    headers = {"Authorization": f"Bearer {AIPROXY_TOKEN}"}
+    payload = {
+        "model": "gpt-4o-mini",
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 1000,
+        "temperature": 0.7
+    }
+    retries = 3
+    for attempt in range(retries):
+        try:
+            response = httpx.post(API_URL, headers=headers, json=payload, timeout=30)
+            response.raise_for_status()
+            return response.json()["choices"][0]["message"]["content"].strip()
+        except httpx.RequestError as e:
+            print(f"Attempt {attempt + 1} failed: {e}")
+            time.sleep(2)
+    print("Failed after multiple retries.")
+    sys.exit(1)
 
-# Save the correlation heatmap as a PNG file
-plt.figure(figsize=(12, 8))
-sns.heatmap(correlation_matrix, annot=True, fmt=".2f", cmap="coolwarm", cbar=True)
-plt.title("Correlation Matrix Heatmap")
-plt.savefig(f"{out_dir}/correlation_matrix.png")
-print(f"Correlation heatmap saved as '{out_dir}/correlation_matrix.png'")
+def generate_story(data, analysis, charts):
+    prompt = (
+        "You are a creative storyteller. "
+        "Craft a compelling narrative based on this dataset analysis:\n\n"
+        f"Data Summary: {analysis['summary']}\n\n"
+        f"Missing Values: {analysis['missing_values']}\n\n"
+        f"Outlier Analysis: {analysis.get('outliers', 'No outliers detected')}\n\n"
+        "The dataset contains information about 10,000 books. "
+        "Create a narrative covering these points:\n"
+        "- Describe the dataset as if introducing it to an audience.\n"
+        "- Highlight interesting insights or anomalies discovered.\n"
+        "- Use a conversational tone, as if explaining findings to a curious reader.\n"
+        "- Reference these charts for visual support: correlation_matrix.png, clusters.png.\n"
+        "End the story with a thought-provoking conclusion about the dataset and its implications."
+    )
+    return query_llm(prompt)
 
-# Outlier detection using Isolation Forest
-print("\nDetecting Outliers with Isolation Forest:")
-if "average_rating" in numerical_columns and "ratings_count" in numerical_columns:
-    features = numerical_columns[["average_rating", "ratings_count"]]
-else:
-    features = numerical_columns.iloc[:, :2]  # Use first two numeric columns if specific ones are missing
-isolation_forest = IsolationForest(random_state=42, contamination=0.05)
-isolation_forest.fit(features)
+def save_readme(content):
+    with open("README.md", "w") as f:
+        f.write(content)
 
-# Predict anomalies (1 for inliers, -1 for outliers)
-predictions = isolation_forest.predict(features)
-data["is_outlier"] = predictions
-outliers = data[data["is_outlier"] == -1]
+def visualize_data(data):
+    correlation_matrix(data)
+    cluster_analysis(data)
 
-print(f"Number of outliers detected: {len(outliers)}")
+def main():
+    if len(sys.argv) != 2:
+        print("Usage: uv run autolysis.py <dataset.csv>")
+        sys.exit(1)
 
-# Visualize inliers vs. outliers
-plt.figure(figsize=(8, 6))
-sns.scatterplot(
-    x=features.iloc[:, 0],
-    y=features.iloc[:, 1],
-    hue=predictions,
-    palette={1: "blue", -1: "red"},
-    legend="full"
-)
-plt.title("Isolation Forest Outlier Detection")
-plt.xlabel(features.columns[0])
-plt.ylabel(features.columns[1])
-plt.savefig(f"{out_dir}/outliers.png")
-print(f"Outlier visualization saved as '{out_dir}/outliers.png'")
+    file_path = sys.argv[1]
+    data = load_data(file_path)
 
-# Clustering Analysis
-print("\nPerforming Clustering Analysis:")
-pca = PCA(n_components=2)
-reduced_features = pca.fit_transform(features)
-kmeans = KMeans(n_clusters=3, random_state=42)
-clusters = kmeans.fit_predict(reduced_features)
+    analysis = basic_analysis(data)
+    outliers = outlier_detection(data)
+    combined_analysis = {**analysis, **outliers}
 
-# Visualize clusters
-plt.figure(figsize=(8, 6))
-sns.scatterplot(
-    x=reduced_features[:, 0], y=reduced_features[:, 1], hue=clusters, palette="viridis")
-plt.title("Clustering Visualization")
-plt.savefig(f"{out_dir}/clustering.png")
-print(f"Clustering visualization saved as '{out_dir}/clustering.png'")
+    visualize_data(data)
 
-# Use GPT-4o-Mini to narrate the story
-print("\nGenerating README.md using GPT-4o-Mini...")
-story_prompt = f"""
-You are an expert data analyst. Write a story about the analysis of a dataset. Include:
-1. A brief description of the dataset.
-2. The types of analysis performed (missing values, outliers, clustering).
-3. Key findings and insights.
-4. Implications and suggestions based on the findings.
+    story = generate_story(data, combined_analysis, ["correlation_matrix.png", "clusters.png"])
+    save_readme(story)
 
-The dataset contains the following columns: {', '.join(data.columns)}.
-The analysis included:
-- Missing value handling.
-- Correlation analysis.
-- Outlier detection using Isolation Forest.
-- Clustering using K-Means.
-
-Provide the response in Markdown format.
-"""
-
-# Proxy API endpoint and headers
-proxy_url = "https://aiproxy.sanand.workers.dev/openai/v1/chat/completions"
-headers = {
-    "Content-Type": "application/json",
-    "Authorization": f"Bearer {AIPROXY_TOKEN}",
-}
-
-# Chat Completion Data
-request_data = {
-    "model": "gpt-4o-mini",
-    "messages": [
-        {"role": "system", "content": "You are an expert data analyst."},
-        {"role": "user", "content": story_prompt},
-    ],
-}
-
-# API Request to the Proxy
-response = requests.post(proxy_url, headers=headers, json=request_data)
-if response.status_code == 200:
-    readme_content = response.json()["choices"][0]["message"]["content"]
-    with open(f"{out_dir}/README.md", "w") as f:
-        f.write(readme_content)
-    print(f"README.md generated and saved as '{out_dir}/README.md'")
-else:
-    print(f"Error: {response.status_code}, {response.text}")
+if __name__ == "__main__":
+    main()
