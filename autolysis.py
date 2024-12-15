@@ -62,25 +62,57 @@ def cluster_analysis(data):
     if numeric_data.shape[1] >= 2:
         kmeans = KMeans(n_clusters=3, random_state=42)
         numeric_data['cluster'] = kmeans.fit_predict(numeric_data)
+
+        # Select first two numeric columns for clustering visualization
+        x_column = numeric_data.columns[0]
+        y_column = numeric_data.columns[1]
+
+        # Create scatter plot
+        # Adjusted the figure size for better readability
+        plt.figure(figsize=(10, 8))
         sns.scatterplot(
-            x=numeric_data.iloc[:, 0],
-            y=numeric_data.iloc[:, 1],
+            x=numeric_data[x_column],
+            y=numeric_data[y_column],
             hue=numeric_data['cluster'],
-            palette='viridis'
+            palette='viridis',
+            s=50  # Adjusted point size for visibility
         )
-        plt.title("Cluster Analysis")
+
+        # Add title and axis labels
+        plt.title("K-Means Clustering Analysis")
+        # Clean and format column name
+        plt.xlabel(x_column.replace("_", " ").title())
+        # Clean and format column name
+        plt.ylabel(y_column.replace("_", " ").title())
+
+        # Save the figure
         plt.savefig("clusters.png")
         plt.close()
 
 
 def correlation_matrix(data):
     correlation = data.corr(numeric_only=True)
-    plt.figure(figsize=(12, 10))  # Increased the figure size
-    sns.heatmap(correlation, annot=True, cmap='coolwarm')
-    plt.title("Correlation Matrix")
-    plt.savefig("correlation_matrix.png")
-    plt.close()
 
+    # Plot the heatmap
+    # Further increased figure size for readability
+    plt.figure(figsize=(14, 12))
+    sns.heatmap(
+        correlation,
+        annot=True,
+        cmap="coolwarm",
+        fmt=".2f",  # Display values with 2 decimal places
+        cbar_kws={"label": "Correlation Coefficient"}  # Add color bar title
+    )
+
+    # Add title and axis labels
+    plt.title("Correlation Matrix", fontsize=14, weight="bold")
+    plt.xlabel("Features", fontsize=12)
+    plt.ylabel("Features", fontsize=12)
+
+    # Save the heatmap
+    # High resolution and tight layout
+    plt.savefig("correlation_matrix.png", dpi=300, bbox_inches="tight")
+    plt.close()
 
 
 def query_llm(prompt):
